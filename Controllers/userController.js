@@ -1,123 +1,239 @@
-import User from "../Models/UserSchema.js";
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-import dotenv from "dotenv";
-import nodemailer from "../Services/Nodemailer.js";
-dotenv.config();
+const userModel = require("../Models/userModel");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const nodemailer = require("nodemailer");
+const {
+  EMAIL_ADDRESS,
+  EMAIL_PASSWORD,
+  SECRET_KEY,
+} = require("../utils/config");
 
-export const registerUser = async (req, res) => {
-  try {
-    const { username, email, password, role } = req.body;
-    const hashPassword = await bcrypt.hash(password, 10);
-    const newUser = new User({ username, email, password: hashPassword, role });
-    await newUser.save();
-    res
-      .status(200)
-      .json({ message: "User Registered Successfully", result: newUser });
-  } catch (error) {
-    console.log(error);
-    res
-      .status(500)
-      .json({ message: "Registration Failed Internal server error" });
-  }
-};
-
-export const loginUser = async (req, res) => {
-  try {
+const userController = {
+  signin: async (req, res) => {
+    // getting email and password from the user
     const { email, password } = req.body;
-    const userDetail = await User.findOne({ email });
-    if (!userDetail) {
-      return res.status(401).json({ message: "User Not Found" });
+
+    //checking whether user exists or not
+    const user = await userModel.findOne({ email });
+
+    // return error if the user does not exist
+    if (!user) {
+      return res.status(401).json({ message: "user does not exists" });
     }
-    const passwordMatch = await bcrypt.compare(password, userDetail.password);
-    if (!passwordMatch) {
-      return res.status(401).json({ message: "Invalid password" });
+
+    // return error if the user doen not verified their account
+    if (!user.verified) {
+      return res
+        .status(401)
+        .json({ message: "User does not verified the account" });
     }
 
-    //jwt part token creation after signin
-    const token = jwt.sign(
-      { _id: userDetail._id },
-      process.env.JWT_SECRET_KEY,
-      { expiresIn: "1h" }
-    );
-    userDetail.token = token;
-    await userDetail.save();
+    // check if the password is correct
+    const isAuthenticated = await bcrypt.compare(password, user.password);
 
-    res
-      .status(200)
-      .json({ message: "User Logged In Successfully", token: token });
-  } catch (error) {
-    console.log(error);
-    res.status(500).json({ message: "Login Failed Internal server error" });
-  }
-};
-
-export const getuser = async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const user = await User.findById(userId);
-    res.status(200).json({ message: "Authorized user", data: [user] });
-  } catch (error) {
-    console.log(error);
-    res
-      .status(500)
-      .json({ message: "Internal server error Failed to get the user" });
-  }
-};
-
-export const forgotPassword = async (req, res) => {
-  const { email } = req.body;
-  const user = await User.findOne({ email });
-  if (!user) {
-    return res.status(404).json({ message: "User not found" });
-  }
-  const token = jwt.sign({ _id: user._id }, process.env.JWT_SECRET_KEY, {
-    expiresIn: "1d",
-  });
-  var transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: process.env.PASSMAIL,
-      pass: process.env.PASSKEY,
-    },
-  });
-
-  var mailOptions = {
-    from: process.env.PASSMAIL,
-    to: user.email,
-    subject: "Password Reset",
-    text:
-      "You are receiving this because you (or someone else) have requested the reset of the password for your account.\n\n" +
-      "Please click on the following link, or paste this into your browser to complete the process:\n\n" +
-      `http://localhost:5173/reset-password/${user._id}/${token}`,
-  };
-  transporter.sendMail(mailOptions, function (error, info) {
-    if (error) {
-      console.log(error);
-      res
-        .status(500)
-        .json({ message: "Internal server error in sending the mail" });
-    } else {
-      res.status(200).json({ message: "Email sent successfully" });
+    // return error if the password is not correct
+    if (!isAuthenticated) {
+      return res.status(401).json({ message: "password does not match" });
     }
-  });
-};
 
-export const resetPassword = async (req, res) => {
-  const { id, token } = req.params;
-  const { password } = req.body;
-  jwt.verify(token, process.env.JWT_SECRET_KEY, (err, decoded) => {
-    if (err) {
-      return res.status(401).json({ message: "Invalid token" });
-    } else {
-      bcrypt
-        .hash(password, 10)
-        .then((hash) => {
-          User.findByIdAndUpdate({ _id: id }, { password: hash })
-            .then((ele) => res.send({ status: "Success" }))
-            .catch((err) => res.send({ status: err }));
+    const payloadData = {
+      name: user.name,
+      id: user._id,
+    };
+
+    // generate a token for the user and return it
+    const token = jwt.sign(payloadData, SECRET_KEY, { expiresIn: "1h" });
+
+    res.status(200).send({ token: token, name: user.name, email: user.email });
+  },
+
+  signup: async (req, res) => {
+    try {
+      // getting signup details from the user
+      const { name, email, password } = req.body;
+
+      // check whether user already exists
+      const existingUser = await userModel.findOne({ email });
+
+      // return response if the user already exits
+      if (existingUser) {
+        return res.status(409).json({ message: "User already exits" });
+      }
+
+      const randomString =
+        Math.random().toString(36).substring(2, 15) +
+        Math.random().toString(36).substring(2, 15);
+
+      const accVerificationLink = `https://merry-pixie-65f0af.netlify.app/users/acc-verification/${randomString}`;
+
+      // check if the password is correct
+      const hasedPassword = await bcrypt.hash(password, 10);
+
+      const newUser = new userModel({
+        name,
+        email,
+        password: hasedPassword,
+        resetToken: randomString,
+      });
+
+      await newUser.save();
+
+      //   email authentication
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: EMAIL_ADDRESS,
+          pass: EMAIL_PASSWORD,
+        },
+      });
+
+      //   sendind email to rest the password
+      const sendMail = async () => {
+        const info = await transporter.sendMail({
+          from: `"deepanagarajan" <${EMAIL_ADDRESS}>`,
+          to: email,
+          subject: "Account Verification",
+          text: `Kindly use this link to verify your account - ${accVerificationLink}`,
+        });
+      };
+
+      sendMail();
+
+      res.status(201).json({
+        message:
+          "User created successfully.Kindly activate your account. Please verify your email!",
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
+
+  accountActivation: async (req, res) => {
+    try {
+      const resetToken = req.params.id;
+
+      const matchedUser = await userModel.findOne({ resetToken });
+
+      if (matchedUser === null) {
+        return res
+          .status(400)
+          .json({ message: "Account activation link expired" });
+      }
+
+      matchedUser.verified = true;
+      matchedUser.resetToken = "";
+
+      await userModel.findByIdAndUpdate(matchedUser.id, matchedUser);
+      res.status(201).json({
+        message: "account verified sucessfully.. kindly visit the login page",
+      });
+    } catch (error) {
+      return res.status(400).json({ Err: "Account activation link expired" });
+    }
+  },
+
+  forgotPassword: async (req, res) => {
+    try {
+      // getting email from the user
+      const { email } = req.body;
+
+      //   return error if the email is not valid
+      if (!email) {
+        return res.status(401).json({ message: "Please enter a valid email" });
+      }
+
+      //   check if the user already exits
+      const user = await userModel.findOne({ email });
+
+      //   return error if the user does not exist
+      if (!user) {
+        return res.status(400).json({ message: "User not found" });
+      }
+
+      // cgenerating random string to create the token
+      const randomString =
+        Math.random().toString(36).substring(2, 15) +
+        Math.random().toString(36).substring(2, 15);
+
+      const link = `https://merry-pixie-65f0af.netlify.app/users/reset-password/${randomString}`;
+
+      user.resetToken = randomString;
+      const updateUser = await userModel.findByIdAndUpdate(user.id, user);
+
+      //   email authentication
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: EMAIL_ADDRESS,
+          pass: EMAIL_PASSWORD,
+        },
+      });
+
+      //   sendind email to rest the password
+      const sendMail = async () => {
+        const info = await transporter.sendMail({
+          from: `"deepanagarajan1208@gmail.com" <${EMAIL_ADDRESS}>`,
+          to: user.email,
+          subject: "Reset Password",
+          text: `Kindly use this link to reset the password - ${link}`,
+        });
+      };
+
+      sendMail()
+        .then(() => {
+          return res
+            .status(201)
+            .json({ message: `Mail has been sent to ${user.email}` });
         })
-        .catch((err) => res.send({ status: err }));
+        .catch((err) => res.status(500).json(err));
+    } catch (error) {
+      return res.status(500).json(error);
     }
-  });
+  },
+
+  resetPassword: async (req, res) => {
+    try {
+      // getting token from the reset url
+      const resetToken = req.params.id;
+
+      //   getting the new password from the user
+      const { password } = req.body;
+
+      //   checking if the user already exists or not using the token
+      const user = await userModel.findOne({ resetToken });
+
+      //   return error if the user does not exist
+      if (!user) {
+        return res.status(400).json({ Err: "user not found" });
+      }
+
+      //   hasing the password
+      const hashedPassword = await bcrypt.hash(password, 10);
+      user.password = hashedPassword;
+
+      //   resetting the token
+      user.resetToken = "";
+
+      await userModel.findByIdAndUpdate(user.id, user);
+
+      res.status(201).json({
+        message: "Password has been changed sucessfully",
+      });
+    } catch (error) {
+      return res.status(500).json(error);
+    }
+  },
+
+  getUserDashboard: async (req, res) => {
+    try {
+      const userId = req.userId;
+      console.log(userId);
+      const user = await userModel.findById(userId, "name email");
+      res.json(user);
+    } catch (error) {
+      console.error("Error getting user profile", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  },
 };
+module.exports = userController;

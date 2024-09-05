@@ -1,31 +1,28 @@
-//jwt.verify
-import jwt from "jsonwebtoken";
-import User from "../Models/UserSchema.js";
-import dotenv from "dotenv";
+const jwt = require("jsonwebtoken");
+const { SECRET_KEY } = require("../utils/config.js");
 
-dotenv.config();
+const authMiddleware = {
+  verifyToken: async (req, res, next) => {
+    let token = req.get("authorization");
 
-const authMiddleware = async (req, res, next) => {
-  //   const token = req.header("Authoriztion");
-  const token = req.headers.authorization?.split("")[1];
-  if (!token) {
-    return res.status(401).json({ message: "Token not found" });
-  }
-  try {
-    const decode = jwt.verify(token, process.env.JWT_SECRET_KEY);
-    req.user = decode;
-    console.log(req.user);
-    const user = await User.findbyId(req.user_id);
-    if (!user) {
-      return res
-        .status(401)
-        .json({ message: "Access Denied Not a Valid User" });
+    if (token && token.startsWith("bearer ")) {
+      token = token.replace("bearer ", "");
     }
-    next();
-  } catch (error) {
-    console.log(error);
-    res.status(500).json({ message: "Invalid Token Internal Sever Error" });
-  }
+
+    if (!token) {
+      return res.status(401).json({ message: "Authentication failed" });
+    }
+
+    try {
+      const decodedToken = jwt.verify(token, SECRET_KEY);
+
+      req.userId = decodedToken.id;
+      next();
+    } catch (error) {
+      console.log("Error verifying token", error);
+      return res.status(401).json({ message: "Authentication failed" });
+    }
+  },
 };
 
-export default authMiddleware;
+module.exports = authMiddleware;
