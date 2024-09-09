@@ -1,6 +1,6 @@
 import validUrl from 'valid-url';
 import { URLModel } from '../model/url.model.js';
-import { generateShortId } from '../utils.js';
+import { generateShortId } from '../model/utils.js';
 
 const baseUrl = process.env.BASEURI;
 

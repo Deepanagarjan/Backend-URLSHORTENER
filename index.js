@@ -18,7 +18,7 @@ app.get('/', (req, res) => {
 app.use('/api/url', urlRoutes);
 app.use('/short', redirectRoutes);
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 const DB_URL = process.env.DB_URL;
 
 mongoose.connect(DB_URL, { useNewUrlParser: true, useUnifiedTopology: true })
